@@ -1,0 +1,17 @@
+{
+  "name": "janus",
+  "version": "1.0.0",
+  "description": "The god of doorways wants to manage your garage.",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.3.2",
+    "dotenv": "^2.0.0",
+    "pubnub": "^3.14.5"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
