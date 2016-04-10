@@ -10,8 +10,8 @@ const fs = require('fs');
 
 var pubnub = require("pubnub")({
     ssl           : true,  // <- enable TLS Tunneling over TCP
-    publish_key   : process.env.PN_PUB_KEY;
-    subscribe_key : process.env.PN_SUB_KEY;
+    publish_key   : process.env.PN_PUB_KEY,
+    subscribe_key : process.env.PN_SUB_KEY
 });
 
 function uploadNewImage() {
@@ -21,10 +21,11 @@ function uploadNewImage() {
     Bucket: 'clearlytech',
     Key: 'garage-image.jpg',
     Body: stream,
-    ContentType: 'image/jpg'
+    ContentType: 'image/jpg',
+    ACL: 'public-read'
   };
   s3.putObject(params, function(err, data) {
-    if(err)
+    if(err) {
       console.log("Error uploading image.", err, data);
     } else {
       notifyNewImage("garage-image.jpg")
@@ -32,7 +33,7 @@ function uploadNewImage() {
   });
 }
 
-function notifyNewImage(imageKey)) {
+function notifyNewImage(imageKey) {
   pubnub.publish({
       channel   : 'image_ready',
       message   : {"url" : imageKey},
