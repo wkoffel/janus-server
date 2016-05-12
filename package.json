@@ -6,6 +6,7 @@
   "dependencies": {
     "aws-sdk": "^2.3.2",
     "dotenv": "^2.0.0",
+    "pi-gpio": "0.0.8",
     "pubnub": "^3.14.5"
   },
   "devDependencies": {},
