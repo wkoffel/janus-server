@@ -89,3 +89,5 @@ pubnub.subscribe({
       pushGarageButton(parseInt(message.door));
     }
 });
+
+console.log("Booted and ready to serve.")
