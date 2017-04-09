@@ -5,6 +5,7 @@ var gpio = require("pi-gpio");
 var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
 
+
 var AWS = require('aws-sdk');
 var accessKey = process.env.AWS_ACCESS_KEY;
 var secretKey = process.env.AWS_SECRET_KEY;
