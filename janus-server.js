@@ -1,6 +1,11 @@
 require('dotenv').config();
 
-var gpio = require("pi-gpio");
+runningOnPi = (process.env.ON_PI == "true");
+
+var gpio;
+if(runningOnPi) {
+  gpio = require("pi-gpio");
+}
 
 var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
@@ -19,7 +24,11 @@ var proc;
 
 // launch a raspistill process to continuously capture the current image
 var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
-proc = spawn('raspistill', args);
+if(runningOnPi) {
+  proc = spawn('raspistill', args);
+} else {
+  console.log("[nopi] Launching raspistill")
+}
 
 var pubnub = require("pubnub")({
     ssl           : true,  // <- enable TLS Tunneling over TCP
@@ -28,20 +37,31 @@ var pubnub = require("pubnub")({
 });
 
 function uploadNewImage() {
+  sourceFile = '/tmp/garage-image.jpg'
   // upload and then notify
-  stream = fs.createReadStream('/tmp/garage-image.jpg')
-  var params = {
-    Bucket: 'clearlytech',
-    Key: 'garage-image.jpg',
-    Body: stream,
-    ContentType: 'image/jpg',
-    ACL: 'public-read'
-  };
-  s3.putObject(params, function(err, data) {
-    if(err) {
-      console.log("Error uploading image.", err, data);
+  fs.stat(sourceFile, function(err, stat) {
+    if(err == null) {
+      // the file exists
+      stream = fs.createReadStream(sourceFile)
+      var params = {
+        Bucket: 'clearlytech',
+        Key: 'garage-image.jpg',
+        Body: stream,
+        ContentType: 'image/jpg',
+        ACL: 'public-read'
+      };
+      s3.putObject(params, function(err, data) {
+        if(err) {
+          console.log("Error uploading image.", err, data);
+        } else {
+          notifyNewImage("garage-image.jpg")
+        }
+      });
+    } else if(err.code == 'ENOENT') {
+        // file does not exist
+        console.log("File " + sourceFile + " does not exist, skipping upload.")
     } else {
-      notifyNewImage("garage-image.jpg")
+        console.log('Error looking for image file: ', err.code);
     }
   });
 }
@@ -61,15 +81,19 @@ function pushGarageButton(door) {
       door_pin = door1_pin;
     }
 
-    gpio.open(door_pin, "output pullup", function() {
-      gpio.write(door_pin, 0);
-      console.log("on");
-      setTimeout(function() {
-        console.log("off");
-        gpio.write(door_pin, 1);
-        gpio.close(door_pin);
-      }, 1000);
-    });
+    if(runningOnPi) {
+      gpio.open(door_pin, "output pullup", function() {
+        gpio.write(door_pin, 0);
+        console.log("on");
+        setTimeout(function() {
+          console.log("off");
+          gpio.write(door_pin, 1);
+          gpio.close(door_pin);
+        }, 1000);
+      });
+    } else {
+      console.log("[nopi] GPIO pin triggered")
+    }
 }
 
 /* ---------------------------------------------------------------------------
