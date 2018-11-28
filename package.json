@@ -4,13 +4,13 @@
   "description": "The god of doorways wants to manage your garage.",
   "main": "index.js",
   "dependencies": {
-    "@google-cloud/pubsub": "^0.21.1",
     "@google-cloud/storage": "^2.3.1",
     "dotenv": "^2.0.0",
     "fast-crc32c": "^1.0.4",
+    "firebase": "^5.5.5",
+    "google-gax": "^0.22.1",
     "grpc": "^1.16.1",
-    "pi-gpio": "0.0.8",
-    "pubnub": "^3.16.5"
+    "pi-gpio": "0.0.8"
   },
   "devDependencies": {},
   "scripts": {

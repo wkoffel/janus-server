@@ -10,48 +10,54 @@ if(runningOnPi) {
 var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
 
+const fs = require('fs');
+
+/**
+ * GCS Initialization
+ */
 const {Storage} = require('@google-cloud/storage');
 const projectId = 'janus-223601';
 const bucketName = 'janus-223601';
 const storage = new Storage({projectId: projectId});
 const bucket = storage.bucket(bucketName);
 
-const fs = require('fs');
+/**
+ * Firebase initialization
+ */
+const firebase = require("firebase");
+require("firebase/firestore");
+firebase.initializeApp({
+  //apiKey: '### FIREBASE API KEY ###',
+  //authDomain: '### FIREBASE AUTH DOMAIN ###',
+  projectId: 'janus-223601'
+});
+// Initialize Cloud Firestore through Firebase
+var firestoreDB = firebase.firestore();
 
-var spawn = require('child_process').spawn;
-var proc;
-
-// launch a raspistill process to continuously capture the current image
-var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
-if(runningOnPi) {
-  proc = spawn('raspistill', args);
-} else {
-  console.log("[nopi] Launching raspistill")
-}
-
-const {PubSub} = require('@google-cloud/pubsub');
-const pubsubClient = new PubSub({projectId: projectId});
-const imageTopic = 'janus-image';
-const doorTopic = 'janus-door';
-const imagePublisher = pubsubClient.topic(imageTopic).publisher()
-const doorPublisher = pubsubClient.topic(doorTopic).publisher()
-
-var pubnub = require("pubnub")({
-    ssl           : true,  // <- enable TLS Tunneling over TCP
-    publish_key   : process.env.PN_PUB_KEY,
-    subscribe_key : process.env.PN_SUB_KEY
+// Disable deprecated features
+firestoreDB.settings({
+  timestampsInSnapshots: true
 });
 
-async function testMessage() {
-  const data = JSON.stringify({ foo: 'bar' });
-  const dataBuffer = Buffer.from(data);
+const doorCollection = "door_requests";
+const imageCollection = "image_requests"
 
-  console.log(`Message ${messageId} published.`);
+// launch a raspistill process to continuously capture the current image
+var spawn = require('child_process').spawn;
+var proc;
+if(runningOnPi) {
+  var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
+  proc = spawn('raspistill', args);
+} else {
+  console.log("[nopi] Launching imagesnap instead of raspistill")
+  var args = ["-w", "1.0", "-q", "/tmp/garage-image.jpg"];
+  proc = spawn('imagesnap', args);
+  proc.on('error', function(err) {
+    console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
+  });
 }
 
-testMessage();
-
-function uploadNewImage() {
+function uploadNewImage(callback) {
   sourceFile = '/tmp/garage-image.jpg'
   // upload and then notify
   fs.stat(sourceFile, function(err, stat) {
@@ -62,7 +68,7 @@ function uploadNewImage() {
           console.log("Error uploading image.", err, data);
         } else {
           file.makePublic();
-          notifyNewImage("garage-image.jpg")
+          callback();
         }
       });
     } else if(err.code == 'ENOENT') {
@@ -72,17 +78,6 @@ function uploadNewImage() {
         console.log('Error looking for image file: ', err.code);
     }
   });
-}
-
-function notifyNewImage(imageKey) {
-  dataBuffer = Buffer.from(JSON.stringify({ foo: 'bar' }));
-  messageId = imagePublisher.publish(dataBuffer)
-
-  // pubnub.publish({
-  //     channel   : 'image_ready',
-  //     message   : {"url" : imageKey, "ts" : Date.now()},
-  //     error     : function(e) { console.log( "Failed to send image_ready notification.", e ); }
-  // });
 }
 
 function pushGarageButton(door) {
@@ -107,23 +102,87 @@ function pushGarageButton(door) {
     }
 }
 
-/* ---------------------------------------------------------------------------
-Listen for Messages
---------------------------------------------------------------------------- */
-pubnub.subscribe({
-    channel  : "capture_image",
-    callback : function(message) {
-      console.log( " > ", message );
-      uploadNewImage();
-    }
-});
+// Mark the door button request as completed
+// by updating the record in Firestore.
+function completeDoorRequest(doc_id) {
+  // create a reference to the doc we are updating
+  var docRef = firestoreDB.collection(doorCollection).doc(doc_id);
 
-pubnub.subscribe({
-    channel  : "door_button",
-    callback : function(message) {
-      console.log( " > ", message );
-      pushGarageButton(parseInt(message.door));
-    }
-});
+  return firestoreDB.runTransaction(function(transaction) {
+      // This code may get re-run multiple times if there are conflicts.
+      return transaction.get(docRef).then(function(doc) {
+          if (!doc.exists) {
+              throw "Document does not exist: " + doc_id;
+          }
+
+          transaction.update(docRef, { status: "completed" })
+      });
+  }).then(function() {
+      console.log(`Marked door request ${doc_id} completed.`);
+  }).catch(function(error) {
+      console.log(`Transaction failed for door request ${doc_id}: `, error);
+  });
+}
+
+function completeImageRequest(doc_id) {
+  // create a reference to the doc we are updating
+  var docRef = firestoreDB.collection(imageCollection).doc(doc_id);
+
+  return firestoreDB.runTransaction(function(transaction) {
+      // This code may get re-run multiple times if there are conflicts.
+      return transaction.get(docRef).then(function(doc) {
+          if (!doc.exists) {
+              throw "Document does not exist: " + doc_id;
+          }
+
+          transaction.update(docRef, { status: "completed" })
+      });
+  }).then(function() {
+      console.log(`Marked image request ${doc_id} completed.`);
+  }).catch(function(error) {
+      console.log(`Transaction failed for image request ${doc_id}: `, error);
+  });
+}
+
+// Monitor Firestore for any pending door requests
+firestoreDB.collection(doorCollection).where("status", "==", "pending")
+    .onSnapshot(function(querySnapshot) {
+        querySnapshot.forEach((doc) => {
+            console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
+            pushGarageButton(doc.data().door);
+            // we have confidence that the button is being pushed,
+            // albeit asynchronously, we'll acknowledge the request now
+            completeDoorRequest(doc.id);
+        });
+    }, function(error) {
+        console.log("door_requests listener encountered an error:", error)
+        // Not sure if this will ever happen in practice.
+        // If it does, we need to do something here.
+        // Maybe notify me that there was an error?
+        // Once this state is reached, the listener is dead and we'll
+        // need to restart it somehow, app will be offline
+    });
+
+  // Monitor Firestore for any pending image requests
+  firestoreDB.collection(imageCollection).where("status", "==", "pending")
+      .onSnapshot(function(querySnapshot) {
+          querySnapshot.forEach((doc) => {
+              console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
+              uploadNewImage(function(error) {
+                if(error) {
+                  console.log("upload image failed:", error)
+                } else {
+                  completeImageRequest(doc.id);
+                }
+              });
+          });
+      }, function(error) {
+          console.log("door_requests listener encountered an error:", error)
+          // Not sure if this will ever happen in practice.
+          // If it does, we need to do something here.
+          // Maybe notify me that there was an error?
+          // Once this state is reached, the listener is dead and we'll
+          // need to restart it somehow, app will be offline
+      });
 
 console.log("Booted and ready to serve.")
