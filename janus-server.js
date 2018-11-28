@@ -29,11 +29,27 @@ if(runningOnPi) {
   console.log("[nopi] Launching raspistill")
 }
 
+const {PubSub} = require('@google-cloud/pubsub');
+const pubsubClient = new PubSub({projectId: projectId});
+const imageTopic = 'janus-image';
+const doorTopic = 'janus-door';
+const imagePublisher = pubsubClient.topic(imageTopic).publisher()
+const doorPublisher = pubsubClient.topic(doorTopic).publisher()
+
 var pubnub = require("pubnub")({
     ssl           : true,  // <- enable TLS Tunneling over TCP
     publish_key   : process.env.PN_PUB_KEY,
     subscribe_key : process.env.PN_SUB_KEY
 });
+
+async function testMessage() {
+  const data = JSON.stringify({ foo: 'bar' });
+  const dataBuffer = Buffer.from(data);
+
+  console.log(`Message ${messageId} published.`);
+}
+
+testMessage();
 
 function uploadNewImage() {
   sourceFile = '/tmp/garage-image.jpg'
@@ -59,11 +75,14 @@ function uploadNewImage() {
 }
 
 function notifyNewImage(imageKey) {
-  pubnub.publish({
-      channel   : 'image_ready',
-      message   : {"url" : imageKey, "ts" : Date.now()},
-      error     : function(e) { console.log( "Failed to send image_ready notification.", e ); }
-  });
+  dataBuffer = Buffer.from(JSON.stringify({ foo: 'bar' }));
+  messageId = imagePublisher.publish(dataBuffer)
+
+  // pubnub.publish({
+  //     channel   : 'image_ready',
+  //     message   : {"url" : imageKey, "ts" : Date.now()},
+  //     error     : function(e) { console.log( "Failed to send image_ready notification.", e ); }
+  // });
 }
 
 function pushGarageButton(door) {
