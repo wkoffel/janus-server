@@ -2,3 +2,4 @@
 node_modules
 janus-server.log
 npm-debug.log
+janus-server-gcp-auth.json

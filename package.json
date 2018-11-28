@@ -5,10 +5,11 @@
   "main": "index.js",
   "dependencies": {
     "@google-cloud/pubsub": "^0.9.0",
-    "aws-sdk": "^2.3.2",
+    "@google-cloud/storage": "^2.3.1",
     "dotenv": "^2.0.0",
+    "fast-crc32c": "^1.0.4",
     "pi-gpio": "0.0.8",
-    "pubnub": "^3.14.5"
+    "pubnub": "^3.16.5"
   },
   "devDependencies": {},
   "scripts": {

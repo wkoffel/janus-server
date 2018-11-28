@@ -10,12 +10,11 @@ if(runningOnPi) {
 var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
 
-
-var AWS = require('aws-sdk');
-var accessKey = process.env.AWS_ACCESS_KEY;
-var secretKey = process.env.AWS_SECRET_KEY;
-AWS.config.update({accessKeyId: accessKey, secretAccessKey: secretKey});
-var s3 = new AWS.S3({apiVersion: '2006-03-01'});
+const {Storage} = require('@google-cloud/storage');
+const projectId = 'janus-223601';
+const bucketName = 'janus-223601';
+const storage = new Storage({projectId: projectId});
+const bucket = storage.bucket(bucketName);
 
 const fs = require('fs');
 
@@ -42,18 +41,11 @@ function uploadNewImage() {
   fs.stat(sourceFile, function(err, stat) {
     if(err == null) {
       // the file exists
-      stream = fs.createReadStream(sourceFile)
-      var params = {
-        Bucket: 'clearlytech',
-        Key: 'garage-image.jpg',
-        Body: stream,
-        ContentType: 'image/jpg',
-        ACL: 'public-read'
-      };
-      s3.putObject(params, function(err, data) {
+      bucket.upload('/tmp/garage-image.jpg', function(err, file, apiResponse) {
         if(err) {
           console.log("Error uploading image.", err, data);
         } else {
+          file.makePublic();
           notifyNewImage("garage-image.jpg")
         }
       });
