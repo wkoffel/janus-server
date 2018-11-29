@@ -10,6 +10,7 @@
     "firebase": "^5.5.5",
     "google-gax": "^0.22.1",
     "grpc": "^1.16.1",
+    "moment": "^2.22.2",
     "pi-gpio": "0.0.8"
   },
   "devDependencies": {},

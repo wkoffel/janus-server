@@ -11,6 +11,7 @@ var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
 
 const fs = require('fs');
+const moment = require('moment');
 
 /**
  * GCS Initialization
@@ -102,11 +103,11 @@ function pushGarageButton(door) {
     }
 }
 
-// Mark the door button request as completed
+// Mark the door/image request as completed
 // by updating the record in Firestore.
-function completeDoorRequest(doc_id) {
+function updateRequest(collection, doc_id, new_status) {
   // create a reference to the doc we are updating
-  var docRef = firestoreDB.collection(doorCollection).doc(doc_id);
+  var docRef = firestoreDB.collection(collection).doc(doc_id);
 
   return firestoreDB.runTransaction(function(transaction) {
       // This code may get re-run multiple times if there are conflicts.
@@ -114,33 +115,12 @@ function completeDoorRequest(doc_id) {
           if (!doc.exists) {
               throw "Document does not exist: " + doc_id;
           }
-
-          transaction.update(docRef, { status: "completed" })
+          transaction.update(docRef, { status: new_status })
       });
   }).then(function() {
-      console.log(`Marked door request ${doc_id} completed.`);
+      console.log(`Marked ${collection} request ${doc_id} ${new_status}.`);
   }).catch(function(error) {
-      console.log(`Transaction failed for door request ${doc_id}: `, error);
-  });
-}
-
-function completeImageRequest(doc_id) {
-  // create a reference to the doc we are updating
-  var docRef = firestoreDB.collection(imageCollection).doc(doc_id);
-
-  return firestoreDB.runTransaction(function(transaction) {
-      // This code may get re-run multiple times if there are conflicts.
-      return transaction.get(docRef).then(function(doc) {
-          if (!doc.exists) {
-              throw "Document does not exist: " + doc_id;
-          }
-
-          transaction.update(docRef, { status: "completed" })
-      });
-  }).then(function() {
-      console.log(`Marked image request ${doc_id} completed.`);
-  }).catch(function(error) {
-      console.log(`Transaction failed for image request ${doc_id}: `, error);
+      console.log(`Transaction failed for ${collection} request ${doc_id}: `, error);
   });
 }
 
@@ -148,14 +128,22 @@ function completeImageRequest(doc_id) {
 firestoreDB.collection(doorCollection).where("status", "==", "pending")
     .onSnapshot(function(querySnapshot) {
         querySnapshot.forEach((doc) => {
-            console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
-            pushGarageButton(doc.data().door);
-            // we have confidence that the button is being pushed,
-            // albeit asynchronously, we'll acknowledge the request now
-            completeDoorRequest(doc.id);
+            //console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
+            request_date = doc.data().requested_at.toDate();
+            seconds_old = moment().diff(moment(request_date), 'seconds');
+            if(seconds_old >= 10) {
+              console.log("Cowardly refusing to open garage door based on request made",
+                          moment(request_date).fromNow());
+              updateRequest(doorCollection, doc.id, "timeout");
+            } else {
+              pushGarageButton(doc.data().door);
+              // we have confidence that the button is being pushed,
+              // albeit asynchronously, we'll acknowledge the request now
+              updateRequest(doorCollection, doc.id, "completed");
+          }
         });
     }, function(error) {
-        console.log("door_requests listener encountered an error:", error)
+        console.log("door_requests listener died with error:", error)
         // Not sure if this will ever happen in practice.
         // If it does, we need to do something here.
         // Maybe notify me that there was an error?
@@ -172,17 +160,12 @@ firestoreDB.collection(doorCollection).where("status", "==", "pending")
                 if(error) {
                   console.log("upload image failed:", error)
                 } else {
-                  completeImageRequest(doc.id);
+                  updateRequest(imageCollection, doc.id, "completed");
                 }
               });
           });
       }, function(error) {
-          console.log("door_requests listener encountered an error:", error)
-          // Not sure if this will ever happen in practice.
-          // If it does, we need to do something here.
-          // Maybe notify me that there was an error?
-          // Once this state is reached, the listener is dead and we'll
-          // need to restart it somehow, app will be offline
+          console.log("image_requests listener died with error:", error)
       });
 
-console.log("Booted and ready to serve.")
+console.log("Janus Booted and ready to serve your garage door needs.")
