@@ -65,7 +65,7 @@ function uploadNewImage(callback) {
       // the file exists
       bucket.upload('/tmp/garage-image.jpg', function(err, file, apiResponse) {
         if(err) {
-          console.log("Error uploading image.", err, data);
+          console.log("Error uploading image.", err);
         } else {
           file.makePublic();
           callback();
