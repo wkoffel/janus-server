@@ -25,12 +25,16 @@ const bucket = storage.bucket(bucketName);
 /**
  * Firebase initialization
  */
-const firebase = require("firebase");
+const firebase = require("firebase-admin");
+const serviceAccount = require('./janus-223601-firebase-adminsdk-p8zrn-7350151901.json');
+
 require("firebase/firestore");
 firebase.initializeApp({
   //apiKey: '### FIREBASE API KEY ###',
   //authDomain: '### FIREBASE AUTH DOMAIN ###',
-  projectId: 'janus-223601'
+  projectId: 'janus-223601',
+  databaseURL: "https://janus-223601.firebaseio.com",
+  credential: firebase.credential.cert(serviceAccount)
 });
 // Initialize Cloud Firestore through Firebase
 var firestoreDB = firebase.firestore();
@@ -64,14 +68,20 @@ function uploadNewImage(callback) {
   fs.stat(sourceFile, function(err, stat) {
     if(err == null) {
       // the file exists
-      bucket.upload('/tmp/garage-image.jpg', function(err, file, apiResponse) {
-        if(err) {
-          console.log("Error uploading image.", err);
-        } else {
-          file.makePublic();
-          callback();
+      bucket.upload('/tmp/garage-image.jpg', {metadata: {
+          cacheControl: 'no-cache, no-store, must-revalidate',
+          pragma: 'no-cache',
+          expires: 0
+        }},
+        function(err, file, apiResponse) {
+          if(err) {
+            console.log("Error uploading image.", err);
+          } else {
+            file.makePublic();
+            callback();
+          }
         }
-      });
+      );
     } else if(err.code == 'ENOENT') {
         // file does not exist
         console.log("File " + sourceFile + " does not exist, skipping upload.")
