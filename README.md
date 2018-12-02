@@ -12,3 +12,5 @@ nvm install 6.9.1
 cd janus-server
 npm install
 ```
+
+It may require a `npm rebuild --build-from-source=grpc` if GRPC is stubborn on the Raspberry Pi.
