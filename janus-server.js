@@ -6,12 +6,19 @@ var gpio;
 if(runningOnPi) {
   gpio = require("pi-gpio");
 }
+var raspberryPiCamera;
+if(runningOnPi) {
+  raspberryPiCamera = require('raspberry-pi-camera-native');
+} 
 
 var door0_pin = 16; // Pi GPIO23
 var door1_pin = 18; // Pi GPIO24
 
 const fs = require('fs');
 const moment = require('moment');
+
+var imageUploadLock = false;
+var imageCaptureLock = false;
 
 /**
  * GCS Initialization
@@ -47,28 +54,47 @@ firestoreDB.settings({
 const doorCollection = "door_requests";
 const imageCollection = "image_requests"
 
-// launch a raspistill process to continuously capture the current image
-var spawn = require('child_process').spawn;
-var proc;
-if(runningOnPi) {
-  var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
-  proc = spawn('raspistill', args);
-} else {
-  console.log("[nopi] Launching imagesnap instead of raspistill")
-  var args = ["-w", "1.0", "-q", "/tmp/garage-image.jpg"];
-  proc = spawn('imagesnap', args);
-  proc.on('error', function(err) {
-    console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
+function captureNewImage(callback, img_name='garage-image.jpg') {
+  if(imageCaptureLock) {
+    console.log("already capturing image, aborting new request");
+    return;
+  }
+  img_path = `/tmp/${img_name}`;
+  var spawn = require('child_process').spawn;
+  var proc;
+  if(runningOnPi) {
+    // capture the current image from the raspi camera
+    var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
+    proc = spawn('raspistill', args);
+  } else {
+    // launch a raspistill process to continuously capture the current image
+    console.log("[nopi] Using imagesnap instead of raspi native camera")
+    var args = ["-w", "1.0", "-q", img_path];
+    proc = spawn('imagesnap', args);
+    proc.on('error', function(err) {
+      console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
+    });
+  }
+
+  proc.on('close', (code) => {
+    console.log(`image capture process exited with code ${code}`);
+    callback();
   });
 }
 
-function uploadNewImage(callback) {
-  sourceFile = '/tmp/garage-image.jpg'
+function uploadNewImage(callback, img_name='garage-image.jpg', archive=false) {
+  if(imageUploadLock) {
+    console.log("already uploading image, aborting new request");
+    return;
+  }
+  img_path = `/tmp/${img_name}`;
+  bucketDest = archive ? "garage-image-archive/"+img_name : img_name;
+  imageUploadLock = true;
   // upload and then notify
-  fs.stat(sourceFile, function(err, stat) {
+  fs.stat(img_path, function(err, stat) {
     if(err == null) {
       // the file exists
-      bucket.upload('/tmp/garage-image.jpg', {metadata: {
+      bucket.upload(img_path, {destination: bucketDest, metadata: {
           cacheControl: 'no-cache, no-store, must-revalidate',
           pragma: 'no-cache',
           expires: 0
@@ -84,10 +110,13 @@ function uploadNewImage(callback) {
       );
     } else if(err.code == 'ENOENT') {
         // file does not exist
-        console.log("File " + sourceFile + " does not exist, skipping upload.")
+        console.log("File " + img_path + " does not exist, skipping upload.")
+        imageUploadLock = false;
     } else {
         console.log('Error looking for image file: ', err.code);
+        imageUploadLock = false;
     }
+    imageUploadLock = false;
   });
 }
 
@@ -165,7 +194,7 @@ firestoreDB.collection(doorCollection).where("status", "==", "pending")
   firestoreDB.collection(imageCollection).where("status", "==", "pending")
       .onSnapshot(function(querySnapshot) {
           querySnapshot.forEach((doc) => {
-              console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
+              //console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
               uploadNewImage(function(error) {
                 if(error) {
                   console.log("upload image failed:", error)
@@ -177,5 +206,16 @@ firestoreDB.collection(doorCollection).where("status", "==", "pending")
       }, function(error) {
           console.log("image_requests listener died with error:", error)
       });
+
+// Start with a fresh image capture on boot.
+captureNewImage(()=>{});
+
+setInterval(() => { 
+  console.log("capturing");
+  let name = "new_image.jpg";
+  captureNewImage(() => {
+    uploadNewImage(() => {}, name, true);
+  }, name);
+}, 5000);
 
 console.log("Janus Booted and ready to serve your garage door needs.")
