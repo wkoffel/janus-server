@@ -4,23 +4,18 @@
   "description": "The god of doorways wants to manage your garage.",
   "main": "index.js",
   "dependencies": {
-    "@google-cloud/storage": "^2.5.0",
-    "dotenv": "^2.0.0",
-    "fast-crc32c": "^1.0.7",
-    "firebase": "^5.11.1",
-    "firebase-admin": "^6.5.1",
-    "google-gax": "^0.22.1",
-    "grpc": "^1.24.2",
+    "@google-cloud/firestore": "^3.7.5",
+    "@google-cloud/storage": "^4.7.0",
+    "dotenv": "^8.2.0",
     "moment": "^2.24.0",
-    "pi-gpio": "0.0.8",
+    "raspicam": "^0.2.14",
     "rpi-gpio": "^2.1.5"
   },
-  "optionalDependencies": {
-    "raspberry-pi-camera-native": "0.0.0"
+  "devDependencies": {
+    "yargs": "^15.3.1"
   },
-  "devDependencies": {},
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC"

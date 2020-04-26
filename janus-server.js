@@ -1,14 +1,17 @@
+#!/usr/bin/env node
+
 require('dotenv').config();
 
 runningOnPi = (process.env.ON_PI == "true");
 
 var gpio;
 if(runningOnPi) {
-  gpio = require("pi-gpio");
+  gpio = require("rpi-gpio");
 }
-var raspberryPiCamera;
+var RaspiCam;
+var camera;
 if(runningOnPi) {
-  raspberryPiCamera = require('raspberry-pi-camera-native');
+  RaspiCam = require("raspicam");
 } 
 
 var door0_pin = 16; // Pi GPIO23
@@ -18,76 +21,40 @@ const fs = require('fs');
 const moment = require('moment');
 
 var imageUploadLock = false;
-var imageCaptureLock = false;
+var imagePath = "/tmp/garage-image.jpg";
 
 /**
  * GCS Initialization
  */
 const {Storage} = require('@google-cloud/storage');
-const projectId = 'janus-223601';
+const storage = new Storage();
 const bucketName = 'janus-223601';
-const storage = new Storage({projectId: projectId});
 const bucket = storage.bucket(bucketName);
 
 /**
  * Firebase initialization
  */
-const firebase = require("firebase-admin");
-const serviceAccount = require('./janus-223601-firebase-adminsdk-p8zrn-7350151901.json');
-
-require("firebase/firestore");
-firebase.initializeApp({
-  //apiKey: '### FIREBASE API KEY ###',
-  //authDomain: '### FIREBASE AUTH DOMAIN ###',
-  projectId: 'janus-223601',
-  databaseURL: "https://janus-223601.firebaseio.com",
-  credential: firebase.credential.cert(serviceAccount)
-});
-// Initialize Cloud Firestore through Firebase
-var firestoreDB = firebase.firestore();
-
-// Disable deprecated features
-firestoreDB.settings({
-  timestampsInSnapshots: true
-});
-
+const {Firestore} = require('@google-cloud/firestore');
+const firestore = new Firestore();
 const doorCollection = "door_requests";
 const imageCollection = "image_requests"
 
-function captureNewImage(callback, img_name='garage-image.jpg') {
-  if(imageCaptureLock) {
-    console.log("already capturing image, aborting new request");
-    return;
-  }
+var spawn = require('child_process').spawn;
+function uploadFreshImage(callback, img_name='garage-image.jpg', archive=false) {
   img_path = `/tmp/${img_name}`;
-  var spawn = require('child_process').spawn;
-  var proc;
-  if(runningOnPi) {
-    // capture the current image from the raspi camera
-    var args = ["-n", "-w", "640", "-h", "480", "-hf", "-vf", "-o", "/tmp/garage-image.jpg", "-t", "0", "-tl", "500"];
-    proc = spawn('raspistill', args);
-  } else {
-    // launch a raspistill process to continuously capture the current image
-    console.log("[nopi] Using imagesnap instead of raspi native camera")
-    var args = ["-w", "1.0", "-q", img_path];
-    proc = spawn('imagesnap', args);
-    proc.on('error', function(err) {
-      console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
-    });
-  }
 
-  proc.on('close', (code) => {
-    console.log(`image capture process exited with code ${code}`);
-    callback();
-  });
-}
-
-function uploadNewImage(callback, img_name='garage-image.jpg', archive=false) {
   if(imageUploadLock) {
     console.log("already uploading image, aborting new request");
     return;
   }
-  img_path = `/tmp/${img_name}`;
+  if(!runningOnPi) { // we don't have a timelapse going locally, so grab a fresh image before uploading
+    // launch an imagesnap process to continuously capture the current image
+      var args = ["-w", "1.0", "-q", `/tmp/${img_name}`];
+      proc = spawn('imagesnap', args);
+      proc.on('error', function(err) {
+        console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
+      });    
+  }
   bucketDest = archive ? "garage-image-archive/"+img_name : img_name;
   imageUploadLock = true;
   // upload and then notify
@@ -146,9 +113,9 @@ function pushGarageButton(door) {
 // by updating the record in Firestore.
 function updateRequest(collection, doc_id, new_status) {
   // create a reference to the doc we are updating
-  var docRef = firestoreDB.collection(collection).doc(doc_id);
+  var docRef = firestore.collection(collection).doc(doc_id);
 
-  return firestoreDB.runTransaction(function(transaction) {
+  return firestore.runTransaction(function(transaction) {
       // This code may get re-run multiple times if there are conflicts.
       return transaction.get(docRef).then(function(doc) {
           if (!doc.exists) {
@@ -163,8 +130,81 @@ function updateRequest(collection, doc_id, new_status) {
   });
 }
 
+/*
+ * Camera Setup
+ */
+
+var lastRefreshAt = 0;
+var lastArchiveAt = 0;
+var forceRefresh = false;
+
+// Create and start the running camera.
+// The Pi camera has a startup time before the exposure settles in
+// so we just run it continuously, taking a photo every 2 seconds
+// and then when we just grab the latest when uploading to the cloud
+if(runningOnPi) {
+  camera = new RaspiCam({
+    mode: "timelapse",
+    output: imgPath,
+    // ./timelapse/image_%06d.jpg", // image_000001.jpg, image_000002.jpg,...
+    width: 800,
+    height: 600,
+    quality: 80,
+    encoding: "jpg",
+    timelapse: 2000, // take a picture every 2 seconds
+    timeout: 0, // never exit unless parent process does    
+    hf: true, // we flip horiz and vert to compensate for the camera...
+    vf: true  // ...which is mounted upside down in garage
+  });
+
+  camera.on("start", function(err, timestamp ){
+    console.log("timelapse started at " + timestamp);
+  });
+
+  camera.on("read", function(err, timestamp, filename ){
+    console.log("timelapse image captured with filename: " + filename);
+    // TODO: every ~30 seconds, we want to proactively freshen the garage-image.jpg on Cloud
+    if(timestamp > (lastRefreshAt + 30)) {
+      console.log("refreshing image to Cloud");
+    }
+    // TODO: every ~30 minutes, we want to push to the corpus of historical photos for some AutoML later
+    if(timestamp > (lastRefreshAt + 30*60)) {
+      console.log("adding image to Cloud archive");
+    }
+  });
+
+  camera.on("exit", function(timestamp ){
+    console.log("timelapse child process has exited");
+  });
+
+  camera.on("stop", function(err, timestamp ){
+    console.log("timelapse child process has been stopped at " + timestamp);
+  });
+
+  camera.start();
+} else {
+  var name = "garage-image.jpg";
+  console.log("[nopi] Using imagesnap when needed instead of raspi camera timelapse");
+  // Set up recurring interval locally to grab and update images
+  setInterval(() => { 
+    console.log("[nopi] refreshing image to Cloud");
+    uploadFreshImage(() => {}, name, false);
+  }, 5000); // 5 seconds
+
+  setInterval(() => { 
+    console.log("[nopi] adding image to Cloud archive");
+    uploadFreshImage(() => {}, name, true);
+  }, 1000*60); // 1 minute
+}
+
+
+
+/*
+ * Firestore Messaging Setup
+ */
+
 // Monitor Firestore for any pending door requests
-firestoreDB.collection(doorCollection).where("status", "==", "pending")
+firestore.collection(doorCollection).where("status", "==", "pending")
     .onSnapshot(function(querySnapshot) {
         querySnapshot.forEach((doc) => {
             //console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
@@ -183,39 +223,33 @@ firestoreDB.collection(doorCollection).where("status", "==", "pending")
         });
     }, function(error) {
         console.log("door_requests listener died with error:", error)
-        // Not sure if this will ever happen in practice.
+        // Haven't seen this ever happen in practice.
         // If it does, we need to do something here.
         // Maybe notify me that there was an error?
         // Once this state is reached, the listener is dead and we'll
         // need to restart it somehow, app will be offline
     });
 
-  // Monitor Firestore for any pending image requests
-  firestoreDB.collection(imageCollection).where("status", "==", "pending")
-      .onSnapshot(function(querySnapshot) {
-          querySnapshot.forEach((doc) => {
-              //console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
-              uploadNewImage(function(error) {
-                if(error) {
-                  console.log("upload image failed:", error)
-                } else {
-                  updateRequest(imageCollection, doc.id, "completed");
-                }
-              });
-          });
-      }, function(error) {
-          console.log("image_requests listener died with error:", error)
-      });
+// Monitor Firestore for any pending image requests
+firestore.collection(imageCollection).where("status", "==", "pending")
+    .onSnapshot(function(querySnapshot) {
+        querySnapshot.forEach((doc) => {
+            //console.log(`${doc.id} => ${JSON.stringify(doc.data(), null, 4)}`);
+            uploadFreshImage(function(error) {
+              if(error) {
+                console.log("upload image failed:", error)
+              } else {
+                updateRequest(imageCollection, doc.id, "completed");
+              }
+            });
+        });
+    }, function(error) {
+        console.log("image_requests listener died with error:", error)
+    });
 
-// Start with a fresh image capture on boot.
-captureNewImage(()=>{});
 
-setInterval(() => { 
-  console.log("capturing");
-  let name = "new_image.jpg";
-  captureNewImage(() => {
-    uploadNewImage(() => {}, name, true);
-  }, name);
-}, 5000);
+/* 
+ * All set, ready to rock!
+ */
 
 console.log("Janus Booted and ready to serve your garage door needs.")

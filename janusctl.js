@@ -10,8 +10,8 @@ require('dotenv').config();
  * GCS Initialization
  */
 const {Storage} = require('@google-cloud/storage');
-const bucketName = 'janus-223601';
 const storage = new Storage();
+const bucketName = 'janus-223601';
 const bucket = storage.bucket(bucketName);
 
 /**
@@ -21,7 +21,6 @@ const {Firestore} = require('@google-cloud/firestore');
 const firestore = new Firestore();
 const doorCollection = "door_requests";
 const imageCollection = "image_requests"
-
 
 function doorButtonPressed(buttonIndex = 0) {
   let collectionRef = firestore.collection(doorCollection);
@@ -41,7 +40,22 @@ function downloadLatestImage(filename = 'garage-image.jpg') {
   file.download({
     destination: dest
   }, function(err) {
-    if(err) {console.log("Failed to download image from Cloud Storage: " + err);}
+    if(err) {
+      console.log("Failed to download image from Cloud Storage: " + err);
+    } else {
+      console.log("Downloaded to " + dest);
+    }
+  });
+}
+
+function requestFreshImage() {
+  let collectionRef = firestore.collection(imageCollection);
+  collectionRef.add({
+    "requested_at": Firestore.FieldValue.serverTimestamp(),
+    "status": "pending",
+    "user": "cli@koffel.org"
+  }).then(documentReference => {
+    console.log(`Added document with name: ${documentReference.id}`);
   });
 }
 
@@ -58,11 +72,28 @@ argv = require('yargs') // eslint-disable-line
       })
   }, (argv) => {
     if (argv.verbose) console.info(`door button :${argv.num}`)
-    doorButtonPressed(argv.num)
+    if(Math.abs(argv.num) <= 1) {
+      doorButtonPressed(argv.num)
+    } else {
+      console.log("Error: door button number must be 0 or 1");
+    }
   })
-  .command('image', 'trigger and download fresh image', (argv) => {
+  .command('image <action>', 'refresh or download image', (yargs) => {
+    yargs
+      .positional('action', {
+        type: 'string',
+        describe: 'image action, "refresh" or "download"',
+        default: "refresh"
+      })
+  }, (argv) => {
     if (argv.verbose) console.info(`fetching new image`);
-    downloadLatestImage();
+    if(argv.action == "refresh") {
+      requestFreshImage();
+    } else if(argv.action == "download") {
+      downloadLatestImage();
+    } else {
+      console.log("Error: unknown image action: " + argv.action);
+    }
   })
   .option('verbose', {
     alias: 'v',
