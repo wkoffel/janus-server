@@ -40,7 +40,10 @@ const firestore = new Firestore();
 const doorCollection = "door_requests";
 const imageCollection = "image_requests"
 
-function uploadFreshImage(archive=false) {
+var lastRefreshAt = 0;
+var lastArchiveAt = 0;
+
+function uploadFreshImage(archive=false, callback) {
   img_path = '/tmp/garage-image.jpg';
 
   if(imageUploadLock) {
@@ -79,6 +82,9 @@ function uploadFreshImage(archive=false) {
           } else {
             if(!archive) {
               file.makePublic();
+              lastRefreshAt = Date.now();
+            } else {
+              lastArchiveAt = Date.now();
             }
           }
         }
@@ -141,10 +147,6 @@ function updateRequest(collection, doc_id, new_status) {
 /*
  * Camera Setup
  */
-
-var lastRefreshAt = 0;
-var lastArchiveAt = 0;
-var forceRefresh = false;
 
 // Create and start the running camera.
 // The Pi camera has a startup time before the exposure settles in
