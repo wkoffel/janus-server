@@ -19,6 +19,7 @@ var door1_pin = 18; // Pi GPIO24
 
 const fs = require('fs');
 const moment = require('moment');
+var spawn = require('child_process').spawn;
 
 var imageUploadLock = false;
 var imagePath = "/tmp/garage-image.jpg";
@@ -39,9 +40,8 @@ const firestore = new Firestore();
 const doorCollection = "door_requests";
 const imageCollection = "image_requests"
 
-var spawn = require('child_process').spawn;
-function uploadFreshImage(callback, img_name='garage-image.jpg', archive=false) {
-  img_path = `/tmp/${img_name}`;
+function uploadFreshImage(archive=false) {
+  img_path = '/tmp/garage-image.jpg';
 
   if(imageUploadLock) {
     console.log("already uploading image, aborting new request");
@@ -49,13 +49,20 @@ function uploadFreshImage(callback, img_name='garage-image.jpg', archive=false) 
   }
   if(!runningOnPi) { // we don't have a timelapse going locally, so grab a fresh image before uploading
     // launch an imagesnap process to continuously capture the current image
-      var args = ["-w", "1.0", "-q", `/tmp/${img_name}`];
+      var args = ["-w", "1.0", "-q", `/tmp/garage-image.jpg`];
       proc = spawn('imagesnap', args);
       proc.on('error', function(err) {
         console.log('WARN: No imagesnap binary available.  Ensure /tmp/garage-image.jpg exists.');
       });    
   }
-  bucketDest = archive ? "garage-image-archive/"+img_name : img_name;
+  basename = runningOnPi ? "garage-image" : "nopi-image";
+
+  if(archive) {
+    bucketDest = `${basename}-archive/${basename}-` + moment().format('YYYY-MM-DD-HH-mm-ss') + ".jpg"
+  } else {
+    bucketDest = `${basename}.jpg`;
+  }
+
   imageUploadLock = true;
   // upload and then notify
   fs.stat(img_path, function(err, stat) {
@@ -70,8 +77,9 @@ function uploadFreshImage(callback, img_name='garage-image.jpg', archive=false) 
           if(err) {
             console.log("Error uploading image.", err);
           } else {
-            file.makePublic();
-            callback();
+            if(!archive) {
+              file.makePublic();
+            }
           }
         }
       );
@@ -159,7 +167,7 @@ if(runningOnPi) {
   });
 
   camera.on("start", function(err, timestamp ) {
-    console.log(new Date().toISOString() + "timelapse started at " + timestamp);
+    console.log(new Date().toISOString() + " timelapse started at " + timestamp);
   });
 
   camera.on("read", function(err, timestamp, filename ){
@@ -168,34 +176,35 @@ if(runningOnPi) {
     // TODO: every ~30 seconds, we want to proactively freshen the garage-image.jpg on Cloud
     if(timestamp > (lastRefreshAt + 30*1000)) {
       console.log(new Date().toISOString() + " refreshing image to Cloud");
+      uploadFreshImage();
     }
     // TODO: every ~30 minutes, we want to push to the corpus of historical photos for some AutoML later
     if(timestamp > (lastRefreshAt + 30*60*1000)) {
       console.log(new Date().toISOString() + " adding image to Cloud archive");
+      uploadFreshImage(true);
     }
   });
 
   camera.on("exit", function(timestamp ) {
-    console.log(new Date().toISOString() + "timelapse child process has exited");
+    console.log(new Date().toISOString() + " timelapse child process has exited");
   });
 
   camera.on("stop", function(err, timestamp ){
-    console.log(new Date().toISOString() + "timelapse child process has been stopped at " + timestamp);
+    console.log(new Date().toISOString() + " timelapse child process has been stopped at " + timestamp);
   });
 
   camera.start();
 } else {
-  var name = "garage-image.jpg";
   console.log("[nopi] Using imagesnap when needed instead of raspi camera timelapse");
   // Set up recurring interval locally to grab and update images
   setInterval(() => { 
     console.log("[nopi] refreshing image to Cloud");
-    uploadFreshImage(() => {}, name, false);
+    uploadFreshImage();
   }, 5000); // 5 seconds
 
   setInterval(() => { 
     console.log("[nopi] adding image to Cloud archive");
-    uploadFreshImage(() => {}, name, true);
+    uploadFreshImage(true);
   }, 1000*60); // 1 minute
 }
 
