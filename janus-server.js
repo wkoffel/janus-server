@@ -21,7 +21,11 @@ const fs = require('fs');
 const moment = require('moment');
 var spawn = require('child_process').spawn;
 
-var imageUploadLock = false;
+var imageUploadLocks = {
+  "archive": false,
+  "refresh" : false
+}
+
 var imagePath = "/tmp/garage-image.jpg";
 
 /**
@@ -43,10 +47,21 @@ const imageCollection = "image_requests"
 var lastRefreshAt = 0;
 var lastArchiveAt = 0;
 
+function getLock(archive) {
+  key = archive ? "archive" : "refresh";
+  return imageUploadLocks[key];
+}
+
+function setLock(archive, lockState) {
+  key = archive ? "archive" : "refresh";
+  imageUploadLocks[key] = lockState;
+}
+
+
 function uploadFreshImage(archive=false, callback) {
   img_path = '/tmp/garage-image.jpg';
 
-  if(imageUploadLock) {
+  if(getLock(archive)) {
     console.log("already uploading image, aborting new request");
     return;
   }
@@ -66,7 +81,7 @@ function uploadFreshImage(archive=false, callback) {
     bucketDest = `${basename}.jpg`;
   }
 
-  imageUploadLock = true;
+  setLock(archive, true);
   // upload and then notify
   fs.stat(img_path, function(err, stat) {
     if(err == null) {
@@ -92,12 +107,12 @@ function uploadFreshImage(archive=false, callback) {
     } else if(err.code == 'ENOENT') {
         // file does not exist
         console.log("File " + img_path + " does not exist, skipping upload.")
-        imageUploadLock = false;
+        setLock(archive, false);
     } else {
         console.log('Error looking for image file: ', err.code);
-        imageUploadLock = false;
+        setLock(archive, false);
     }
-    imageUploadLock = false;
+    setLock(archive, false);
   });
 }
 
