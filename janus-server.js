@@ -145,7 +145,8 @@ var forceRefresh = false;
 if(runningOnPi) {
   camera = new RaspiCam({
     mode: "timelapse",
-    output: imgPath,
+    output: imagePath,
+    log: function() {}, // disable verbose RaspiCam logging
     // ./timelapse/image_%06d.jpg", // image_000001.jpg, image_000002.jpg,...
     width: 800,
     height: 600,
@@ -157,28 +158,29 @@ if(runningOnPi) {
     vf: true  // ...which is mounted upside down in garage
   });
 
-  camera.on("start", function(err, timestamp ){
-    console.log("timelapse started at " + timestamp);
+  camera.on("start", function(err, timestamp ) {
+    console.log(new Date().toISOString() + "timelapse started at " + timestamp);
   });
 
   camera.on("read", function(err, timestamp, filename ){
-    console.log("timelapse image captured with filename: " + filename);
+    //console.log("timelapse image captured with filename: " + filename);
+
     // TODO: every ~30 seconds, we want to proactively freshen the garage-image.jpg on Cloud
-    if(timestamp > (lastRefreshAt + 30)) {
-      console.log("refreshing image to Cloud");
+    if(timestamp > (lastRefreshAt + 30*1000)) {
+      console.log(new Date().toISOString() + " refreshing image to Cloud");
     }
     // TODO: every ~30 minutes, we want to push to the corpus of historical photos for some AutoML later
-    if(timestamp > (lastRefreshAt + 30*60)) {
-      console.log("adding image to Cloud archive");
+    if(timestamp > (lastRefreshAt + 30*60*1000)) {
+      console.log(new Date().toISOString() + " adding image to Cloud archive");
     }
   });
 
-  camera.on("exit", function(timestamp ){
-    console.log("timelapse child process has exited");
+  camera.on("exit", function(timestamp ) {
+    console.log(new Date().toISOString() + "timelapse child process has exited");
   });
 
   camera.on("stop", function(err, timestamp ){
-    console.log("timelapse child process has been stopped at " + timestamp);
+    console.log(new Date().toISOString() + "timelapse child process has been stopped at " + timestamp);
   });
 
   camera.start();
