@@ -199,7 +199,7 @@ if(runningOnPi) {
       uploadFreshImage();
     }
     // TODO: every ~30 minutes, we want to push to the corpus of historical photos for some AutoML later
-    if(timestamp > (lastRefreshAt + 30*60*1000)) {
+    if(timestamp > (lastArchiveAt + 30*60*1000)) {
       console.log(new Date().toISOString() + " adding image to Cloud archive");
       uploadFreshImage(true);
     }
