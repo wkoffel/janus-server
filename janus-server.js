@@ -6,7 +6,7 @@ runningOnPi = (process.env.ON_PI == "true");
 
 var gpio;
 if(runningOnPi) {
-  gpio = require("rpi-gpio");
+  gpio = require("rpi-gpio").promise;
 }
 var RaspiCam;
 var camera;
@@ -124,15 +124,18 @@ function pushGarageButton(door) {
     }
 
     if(runningOnPi) {
-      gpio.open(door_pin, "output pullup", function() {
-        gpio.write(door_pin, 0);
-        console.log("on");
-        setTimeout(function() {
-          console.log("off");
-          gpio.write(door_pin, 1);
-          gpio.close(door_pin);
-        }, 1000);
-      });
+	gpio.setup(door_pin, gpio.DIR_OUT)
+	    .then(() => {
+		gpio.write(door_pin, true);
+		console.log("on");
+		setTimeout(function() {
+		    console.log("off");
+		    gpio.write(door_pin, false);
+		}, 1000);
+	    })
+	    .catch((err) => {
+		console.log("GPIO Error: ", err.toString());
+	    });
     } else {
       console.log("[nopi] GPIO pin triggered")
     }
